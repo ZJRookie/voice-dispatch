@@ -104,7 +104,7 @@ func InitDispatch(cx *gin.Context) {
 		cx.JSON(http.StatusOK, gin.H{"code": 1001, "data": nil, "msg": err.Error()})
 		return
 	}
-	res := infra.RedisClient.SetNX(cx, DISPATCHKEY, redisData, 0)
+	res := infra.RedisClient.Set(cx, DISPATCHKEY, redisData, 0)
 	if res.Err() != nil {
 		infra.Zaplog.Error("初始化失败：" + res.Err().Error())
 		cx.JSON(http.StatusOK, gin.H{"code": 1002, "data": nil, "msg": res.Err().Error()})
@@ -133,6 +133,7 @@ func GetDispatch(cx *gin.Context) {
 }
 
 func DispatchEdit(cx *gin.Context) {
+	infra.Zaplog.Info("Dispatch Edit Req Data:")
 	var req request.DispatchEditRequest
 
 	err := cx.ShouldBind(&req)
@@ -250,7 +251,7 @@ func DispatchEdit(cx *gin.Context) {
 		return
 	}
 
-	r := infra.RedisClient.SetNX(cx, DISPATCHKEY, redisData, 0)
+	r := infra.RedisClient.Set(cx, DISPATCHKEY, redisData, 0)
 	if r.Err() != nil {
 		infra.Zaplog.Error("调度保存失败：" + r.Err().Error())
 		cx.JSON(http.StatusOK, gin.H{"code": 1002, "data": nil, "msg": r.Err().Error()})
