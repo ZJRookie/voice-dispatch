@@ -116,7 +116,7 @@ func InitDispatch(cx *gin.Context) {
 					Name:   startWorkSpaceNames[i],
 					Lon:    startWorkSpaceGps[i]["lon"],
 					Lat:    startWorkSpaceGps[i]["lat"],
-					Radius: 10,
+					Radius: 100,
 				},
 			},
 			EndWorkSpace: model.EndWorkSpace{
@@ -125,7 +125,7 @@ func InitDispatch(cx *gin.Context) {
 					Name:   endWorkSpaceNames[i],
 					Lon:    endWorkSpaceGps[i]["lon"],
 					Lat:    endWorkSpaceGps[i]["lat"],
-					Radius: 10,
+					Radius: 100,
 				},
 			},
 		}
