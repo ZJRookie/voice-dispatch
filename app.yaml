@@ -1,0 +1,17 @@
+app:
+  port: 9999
+log:
+  fileName: ./log/voice-dispatch.log
+  maxSize:
+  maxBackups:
+  maxAge:
+  consoleLog:
+redis:
+  addr: 127.0.0.1:6379
+  password:
+  db: 0
+sound:
+  token: HK1684112758
+  url: https://speaker.17laimai.cn/notify.php
+  version: 1
+
