@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/go-resty/resty/v2"
 	"github.com/samber/lo"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"time"
 	"voice-dispatch/app/model"
 	"voice-dispatch/app/request"
 	"voice-dispatch/app/response"
@@ -27,8 +29,48 @@ var excavatorNames = [4]string{"挖机01", "挖机02", "挖机03", "挖机04"}
 var truckNames = [4]string{"自卸车01", "自卸车02", "自卸车03", "自卸车04"}
 var sn = [4]string{"3402212212261", "3402212212262", "", ""}
 var maxTruckNum = 4
+var dispatchTimer = time.Tick(time.Second * 5)
 
 func InitDispatch(cx *gin.Context) {
+	go func() {
+		for {
+			select {
+			case <-dispatchTimer:
+				// 定时器到期，执行相应操作
+				res := infra.RedisClient.Get(cx, DISPATCHKEY)
+				if res.Err() == nil {
+					var data model.Dispatch
+					result, _ := res.Bytes()
+					err := json.Unmarshal(result, &data)
+					if err == nil {
+						for i, platform := range data.Platforms {
+							for j, truck := range platform.StartWorkSpace.Excavator.Trucks {
+								if truck.Status == 1 {
+									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Status = 3
+									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Lon = platform.EndWorkSpace.Lon
+									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Lat = platform.EndWorkSpace.Lat
+								} else if truck.Status == 3 {
+									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Status = 1
+									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Lon = platform.StartWorkSpace.Lon
+									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Lat = platform.StartWorkSpace.Lat
+								}
+							}
+						}
+						redisData, err := json.Marshal(data)
+						if err != nil {
+							infra.Zaplog.Error("格式化数据失败：" + err.Error())
+						}
+						res := infra.RedisClient.Set(cx, DISPATCHKEY, redisData, 0)
+						if res.Err() != nil {
+							infra.Zaplog.Error("初始化失败：" + res.Err().Error())
+						}
+						infra.Zaplog.Info("车子正在装卸")
+						fmt.Println("车子正在装卸")
+					}
+				}
+			}
+		}
+	}()
 	var platforms []model.Platform
 	var excavators []model.Excavator
 	var trucks []model.Truck
@@ -55,11 +97,12 @@ func InitDispatch(cx *gin.Context) {
 		})
 
 		trucks = append(trucks, model.Truck{
-			Id:   i + 1,
-			Name: truckNames[i],
-			Sn:   sn[i],
-			Lon:  parking.Lon,
-			Lat:  parking.Lat,
+			Id:     i + 1,
+			Name:   truckNames[i],
+			Sn:     sn[i],
+			Lon:    parking.Lon,
+			Lat:    parking.Lat,
+			Status: 0,
 		})
 	}
 
@@ -199,6 +242,9 @@ func DispatchEdit(cx *gin.Context) {
 		})
 		for i, platform := range data.Platforms {
 			if platform.Id == req.ToPlatformId {
+				truckReq.Lon = platform.StartWorkSpace.Lon
+				truckReq.Lat = platform.StartWorkSpace.Lat
+				truckReq.Status = 1
 				data.Platforms[i].StartWorkSpace.Excavator.Trucks = append(platform.StartWorkSpace.Excavator.Trucks, truckReq)
 				data.Platforms[i].StartWorkSpace.Excavator.CurrentTruckNum += 1
 				break
@@ -217,6 +263,9 @@ func DispatchEdit(cx *gin.Context) {
 				break
 			}
 		}
+		truckReq.Lon = data.Parking.Lon
+		truckReq.Lat = data.Parking.Lat
+		truckReq.Status = 0
 		data.Parking.Trucks = append(data.Parking.Trucks, truckReq)
 	case req.ToPlatformId > 0 && fromId > 0 && req.ToPlatformId != fromId:
 		// 工作区->工作区
@@ -234,6 +283,9 @@ func DispatchEdit(cx *gin.Context) {
 		}
 		for i, platform := range data.Platforms {
 			if platform.Id == req.ToPlatformId {
+				truckReq.Lon = platform.StartWorkSpace.Lon
+				truckReq.Lat = platform.StartWorkSpace.Lat
+				truckReq.Status = 1
 				data.Platforms[i].StartWorkSpace.Excavator.Trucks = append(platform.StartWorkSpace.Excavator.Trucks, truckReq)
 				break
 			}
@@ -243,6 +295,8 @@ func DispatchEdit(cx *gin.Context) {
 		cx.JSON(http.StatusOK, gin.H{"code": 1005, "data": nil, "msg": "场景不处理"})
 		return
 	}
+
+	//
 
 	redisData, err := json.Marshal(data)
 	if err != nil {
