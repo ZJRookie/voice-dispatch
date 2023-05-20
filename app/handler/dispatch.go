@@ -26,7 +26,7 @@ var platformNum int
 var startWorkSpaceNames = [4]string{"1200平台", "1230平台", "1250平台", "1280平台"}
 var endWorkSpaceNames = [4]string{"1号排土场", "2号排土场", "1号破碎厂", "2号破碎厂"}
 var startWorkSpaceGps = [4]map[string]float64{{"lon": 119.137911, "lat": 32.110117}, {"lon": 119.134857, "lat": 32.109321}, {"lon": 119.135216, "lat": 32.107395}, {"lon": 119.137875, "lat": 32.107395}}
-var endWorkSpaceGps = [4]map[string]float64{{"lon": 119.140936, "lat": 32.104948}, {"lon": 119.143085, "lat": 32.105559}, {"lon": 119.131408, "lat": 32.105774}, {"lon": 119.130025, "lat": 32.105881}}
+var endWorkSpaceGps = [4]map[string]float64{{"lon": 119.140936, "lat": 32.104948}, {"lon": 119.143085, "lat": 32.105559}, {"lon": 119.131408, "lat": 32.105774}, {"lon": 119.125869, "lat": 32.105881}}
 var excavatorNames = [4]string{"挖机01", "挖机02", "挖机03", "挖机04"}
 var truckNames = [10]string{"自卸车01", "自卸车02", "自卸车03", "自卸车04", "自卸车05", "自卸车06", "自卸车07", "自卸车08", "自卸车09", "自卸车10"}
 var sn = [10]string{"3402212212261", "3402212212262", "", "", "", "", "", "", "", ""}
@@ -47,17 +47,18 @@ func InitDispatch(cx *gin.Context) {
 					if err == nil {
 						for i, platform := range data.Platforms {
 							for j, truck := range platform.StartWorkSpace.Excavator.Trucks {
-								truckGps := data.Platforms[i].StartWorkSpace.Excavator.Trucks[j]
 								if truck.Status == 1 {
 									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Status = 3
 									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Lon = platform.EndWorkSpace.Lon
 									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Lat = platform.EndWorkSpace.Lat
-									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Route = gpsSimulator(geo.NewPoint(truckGps.Lat, truckGps.Lon), geo.NewPoint(platform.EndWorkSpace.Lat, platform.EndWorkSpace.Lon))
+									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Route = gpsSimulator(geo.NewPoint(platform.StartWorkSpace.Lat, platform.StartWorkSpace.Lon), geo.NewPoint(platform.EndWorkSpace.Lat, platform.EndWorkSpace.Lon))
+									fmt.Println("车子正在去卸料")
 								} else if truck.Status == 3 {
 									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Status = 1
 									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Lon = platform.StartWorkSpace.Lon
 									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Lat = platform.StartWorkSpace.Lat
-									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Route = gpsSimulator(geo.NewPoint(truckGps.Lat, truckGps.Lon), geo.NewPoint(platform.StartWorkSpace.Lat, platform.StartWorkSpace.Lon))
+									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Route = gpsSimulator(geo.NewPoint(platform.EndWorkSpace.Lat, platform.EndWorkSpace.Lon), geo.NewPoint(platform.StartWorkSpace.Lat, platform.StartWorkSpace.Lon))
+									fmt.Println("车子正在去装料")
 								}
 							}
 						}
@@ -146,6 +147,7 @@ func InitDispatch(cx *gin.Context) {
 		for k := range trucksEntry {
 			trucksEntry[k].Lat = platform.StartWorkSpace.Lat
 			trucksEntry[k].Lon = platform.StartWorkSpace.Lon
+			trucksEntry[k].Status = 1
 			trucksEntry[k].Route = gpsSimulator(geo.NewPoint(parking.Lat, parking.Lon), geo.NewPoint(platform.StartWorkSpace.Lat, platform.StartWorkSpace.Lon))
 		}
 		excavator.CurrentTruckNum = trucksEntryNum
@@ -359,7 +361,7 @@ func gpsSimulator(start *geo.Point, end *geo.Point) (res []model.Route) {
 	res = append(res, model.Route{Lat: start.Lat(), Lon: start.Lng()})
 	for i := 1; i < 10; i++ {
 		// 计算每个中间点的经纬度
-		mp := pointOnBearing(start, bearing, (float64(i)*(distance))/1000.0)
+		mp := pointOnBearing(start, bearing, float64(i)*distance)
 		res = append(res, model.Route{Lat: mp.Lat(), Lon: mp.Lng()})
 	}
 
