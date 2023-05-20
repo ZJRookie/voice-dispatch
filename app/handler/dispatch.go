@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/go-resty/resty/v2"
+	"github.com/kellydunn/golang-geo"
 	"github.com/samber/lo"
+	"math"
 	"math/rand"
 	"net/http"
 	"strconv"
@@ -26,9 +28,9 @@ var endWorkSpaceNames = [4]string{"1号排土场", "2号排土场", "1号破碎�
 var startWorkSpaceGps = [4]map[string]float64{{"lon": 119.137911, "lat": 32.110117}, {"lon": 119.134857, "lat": 32.109321}, {"lon": 119.135216, "lat": 32.107395}, {"lon": 119.137875, "lat": 32.107395}}
 var endWorkSpaceGps = [4]map[string]float64{{"lon": 119.140936, "lat": 32.104948}, {"lon": 119.143085, "lat": 32.105559}, {"lon": 119.131408, "lat": 32.105774}, {"lon": 119.130025, "lat": 32.105881}}
 var excavatorNames = [4]string{"挖机01", "挖机02", "挖机03", "挖机04"}
-var truckNames = [4]string{"自卸车01", "自卸车02", "自卸车03", "自卸车04"}
-var sn = [4]string{"3402212212261", "3402212212262", "", ""}
-var maxTruckNum = 4
+var truckNames = [10]string{"自卸车01", "自卸车02", "自卸车03", "自卸车04", "自卸车05", "自卸车06", "自卸车07", "自卸车08", "自卸车09", "自卸车10"}
+var sn = [10]string{"3402212212261", "3402212212262", "", "", "", "", "", "", "", ""}
+var maxTruckNum = 2
 var dispatchTimer = time.Tick(time.Second * 5)
 
 func InitDispatch(cx *gin.Context) {
@@ -45,14 +47,17 @@ func InitDispatch(cx *gin.Context) {
 					if err == nil {
 						for i, platform := range data.Platforms {
 							for j, truck := range platform.StartWorkSpace.Excavator.Trucks {
+								truckGps := data.Platforms[i].StartWorkSpace.Excavator.Trucks[j]
 								if truck.Status == 1 {
 									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Status = 3
 									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Lon = platform.EndWorkSpace.Lon
 									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Lat = platform.EndWorkSpace.Lat
+									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Route = gpsSimulator(geo.NewPoint(truckGps.Lat, truckGps.Lon), geo.NewPoint(platform.EndWorkSpace.Lat, platform.EndWorkSpace.Lon))
 								} else if truck.Status == 3 {
 									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Status = 1
 									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Lon = platform.StartWorkSpace.Lon
 									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Lat = platform.StartWorkSpace.Lat
+									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Route = gpsSimulator(geo.NewPoint(truckGps.Lat, truckGps.Lon), geo.NewPoint(platform.StartWorkSpace.Lat, platform.StartWorkSpace.Lon))
 								}
 							}
 						}
@@ -95,7 +100,9 @@ func InitDispatch(cx *gin.Context) {
 			CurrentTruckNum: 0,
 			MaxTruckNum:     maxTruckNum,
 		})
+	}
 
+	for i := 0; i < 10; i++ {
 		trucks = append(trucks, model.Truck{
 			Id:     i + 1,
 			Name:   truckNames[i],
@@ -132,6 +139,17 @@ func InitDispatch(cx *gin.Context) {
 		excavator := excavators[i]
 		excavator.Lon = platform.StartWorkSpace.Lon
 		excavator.Lat = platform.StartWorkSpace.Lat
+		trucksEntryNum := rand.Intn(maxTruckNum + 1)
+		trucksEntry := trucks[:trucksEntryNum]
+		trucks = trucks[trucksEntryNum:]
+
+		for k := range trucksEntry {
+			trucksEntry[k].Lat = platform.StartWorkSpace.Lat
+			trucksEntry[k].Lon = platform.StartWorkSpace.Lon
+			trucksEntry[k].Route = gpsSimulator(geo.NewPoint(parking.Lat, parking.Lon), geo.NewPoint(platform.StartWorkSpace.Lat, platform.StartWorkSpace.Lon))
+		}
+		excavator.CurrentTruckNum = trucksEntryNum
+		excavator.Trucks = trucksEntry
 		platform.StartWorkSpace.Excavator = excavator
 		platforms = append(platforms, platform)
 	}
@@ -175,7 +193,11 @@ func GetDispatch(cx *gin.Context) {
 	cx.JSON(http.StatusOK, gin.H{"code": http.StatusOK, "data": data, "msg": nil})
 }
 
+var mx sync.Mutex
+
 func DispatchEdit(cx *gin.Context) {
+	defer mx.Unlock()
+	mx.Lock()
 	infra.Zaplog.Info("Dispatch Edit Req Data:")
 	var req request.DispatchEditRequest
 
@@ -242,6 +264,13 @@ func DispatchEdit(cx *gin.Context) {
 		})
 		for i, platform := range data.Platforms {
 			if platform.Id == req.ToPlatformId {
+				//判断平台机械是否已经满了
+				if platform.StartWorkSpace.Excavator.CurrentTruckNum >= platform.StartWorkSpace.Excavator.MaxTruckNum && req.Type != 1 {
+					infra.Zaplog.Error("平台已满")
+					cx.JSON(http.StatusOK, gin.H{"code": 1008, "data": nil, "msg": "平台已满，调度失败"})
+					return
+				}
+				truckReq.Route = gpsSimulator(geo.NewPoint(truckReq.Lat, truckReq.Lon), geo.NewPoint(platform.StartWorkSpace.Lat, platform.StartWorkSpace.Lon))
 				truckReq.Lon = platform.StartWorkSpace.Lon
 				truckReq.Lat = platform.StartWorkSpace.Lat
 				truckReq.Status = 1
@@ -260,9 +289,11 @@ func DispatchEdit(cx *gin.Context) {
 					}
 					return truck, true
 				})
+				data.Platforms[i].StartWorkSpace.Excavator.CurrentTruckNum -= 1
 				break
 			}
 		}
+		truckReq.Route = gpsSimulator(geo.NewPoint(truckReq.Lat, truckReq.Lon), geo.NewPoint(data.Parking.Lat, data.Parking.Lon))
 		truckReq.Lon = data.Parking.Lon
 		truckReq.Lat = data.Parking.Lat
 		truckReq.Status = 0
@@ -283,9 +314,16 @@ func DispatchEdit(cx *gin.Context) {
 		}
 		for i, platform := range data.Platforms {
 			if platform.Id == req.ToPlatformId {
+				if platform.StartWorkSpace.Excavator.CurrentTruckNum >= platform.StartWorkSpace.Excavator.MaxTruckNum && req.Type != 1 {
+					infra.Zaplog.Error("平台已满")
+					cx.JSON(http.StatusOK, gin.H{"code": 1009, "data": nil, "msg": "平台已满，调度失败"})
+					return
+				}
+				truckReq.Route = gpsSimulator(geo.NewPoint(truckReq.Lat, truckReq.Lon), geo.NewPoint(platform.StartWorkSpace.Lat, platform.StartWorkSpace.Lon))
 				truckReq.Lon = platform.StartWorkSpace.Lon
 				truckReq.Lat = platform.StartWorkSpace.Lat
 				truckReq.Status = 1
+				data.Platforms[i].StartWorkSpace.Excavator.CurrentTruckNum += 1
 				data.Platforms[i].StartWorkSpace.Excavator.Trucks = append(platform.StartWorkSpace.Excavator.Trucks, truckReq)
 				break
 			}
@@ -295,8 +333,6 @@ func DispatchEdit(cx *gin.Context) {
 		cx.JSON(http.StatusOK, gin.H{"code": 1005, "data": nil, "msg": "场景不处理"})
 		return
 	}
-
-	//
 
 	redisData, err := json.Marshal(data)
 	if err != nil {
@@ -313,6 +349,35 @@ func DispatchEdit(cx *gin.Context) {
 	}
 
 	cx.JSON(http.StatusOK, gin.H{"code": http.StatusOK, "data": data, "msg": nil})
+}
+
+func gpsSimulator(start *geo.Point, end *geo.Point) (res []model.Route) {
+	// 两个GPS点之间的距离
+	bearing := start.BearingTo(end) // 两个GPS点之间的方向角
+	// 每500米生成一个GPS点
+	distance := start.GreatCircleDistance(end) / 10 // 两个GPS点之间的距离
+	res = append(res, model.Route{Lat: start.Lat(), Lon: start.Lng()})
+	for i := 1; i < 10; i++ {
+		// 计算每个中间点的经纬度
+		mp := pointOnBearing(start, bearing, (float64(i)*(distance))/1000.0)
+		res = append(res, model.Route{Lat: mp.Lat(), Lon: mp.Lng()})
+	}
+
+	return res
+}
+
+func pointOnBearing(p *geo.Point, bearing, distance float64) *geo.Point {
+	// 计算新GPS点的经度和纬度
+	lat1 := p.Lat() * math.Pi / 180.0
+	lon1 := p.Lng() * math.Pi / 180.0
+	b := bearing * math.Pi / 180.0
+	d := distance / 6378.1 // 地球半径约为6378.1千米
+	lat2 := math.Asin(math.Sin(lat1)*math.Cos(d) + math.Cos(lat1)*math.Sin(d)*math.Cos(b))
+	lon2 := lon1 + math.Atan2(math.Sin(b)*math.Sin(d)*math.Cos(lat1), math.Cos(d)-math.Sin(lat1)*math.Sin(lat2))
+	// 将经度和纬度转换回弧度制
+	lat2 = lat2 * 180.0 / math.Pi
+	lon2 = lon2 * 180.0 / math.Pi
+	return geo.NewPoint(lat2, lon2)
 }
 
 func Notify(cx *gin.Context) {
