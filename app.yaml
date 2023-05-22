@@ -11,7 +11,7 @@ redis:
   password:
   db: 0
 sound:
-  token: HK1684112758
-  url: https://speaker.17laimai.cn/notify.php
+  token: HK168
+  url: https://speake
   version: 1
 

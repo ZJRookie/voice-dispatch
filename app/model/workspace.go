@@ -10,7 +10,7 @@ type WorkSpace struct {
 
 type StartWorkSpace struct {
 	WorkSpace
-	Excavator Excavator `json:"excavator"`
+	Excavator *Excavator `json:"excavator"`
 }
 
 type EndWorkSpace struct {
