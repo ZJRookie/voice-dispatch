@@ -15,6 +15,7 @@ func Init() {
 	route.GET("/get-dispatch", handler.GetDispatch)
 	route.POST("/machine-Notify", handler.Notify)
 	route.POST("/dispatch-edit", handler.DispatchEdit)
+	route.GET("/easter-egg", handler.EasterEgg)
 
 	err := route.Run(":" + strconv.Itoa(config.AppConfig.App.Port))
 	if err != nil {

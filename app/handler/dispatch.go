@@ -197,6 +197,42 @@ func GetDispatch(cx *gin.Context) {
 
 var mx sync.Mutex
 
+func EasterEgg(cx *gin.Context) {
+	client := resty.New()
+	res, err := client.R().
+		EnableTrace().
+		SetQueryParams(map[string]string{
+			"id":      "3402212212262",
+			"token":   config.AppConfig.Sound.Token,
+			"version": strconv.Itoa(config.AppConfig.Sound.Version),
+			"message": "预祝智鹤科技第一届黑客马拉松大赛圆满成功",
+		}).
+		Get(config.AppConfig.Sound.Url)
+	if err != nil {
+		infra.Zaplog.Error("调度失败：" + err.Error())
+	}
+	res, err = client.R().
+		EnableTrace().
+		SetQueryParams(map[string]string{
+			"id":      "3402212212262",
+			"token":   config.AppConfig.Sound.Token,
+			"version": strconv.Itoa(config.AppConfig.Sound.Version),
+			"message": "请各位看官老爷，为思维冲浪队投上宝贵的一票",
+		}).
+		Get(config.AppConfig.Sound.Url)
+	if err != nil {
+		infra.Zaplog.Error("调度失败：" + err.Error())
+	}
+
+	infra.Zaplog.Info("调度结果：" + string(res.Body()))
+	var result response.SoundNotifyResponse
+	err = json.Unmarshal(res.Body(), &result)
+	if err != nil {
+		infra.Zaplog.Error("数据解析失败：" + err.Error())
+	}
+
+}
+
 func DispatchEdit(cx *gin.Context) {
 	defer mx.Unlock()
 	mx.Lock()
