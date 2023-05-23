@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/go-resty/resty/v2"
-	"github.com/kellydunn/golang-geo"
-	"github.com/samber/lo"
 	"math/rand"
 	"net/http"
 	"strconv"
@@ -44,18 +42,13 @@ func InitDispatch(cx *gin.Context) {
 					result, _ := res.Bytes()
 					err := json.Unmarshal(result, &data)
 					if err == nil {
-						for i, platform := range data.Platforms {
-							for j, truck := range platform.StartWorkSpace.Excavator.Trucks {
+						for _, platform := range data.Platforms {
+							for _, truck := range platform.StartWorkSpace.Excavator.Trucks {
 								if truck.Status == 1 {
-									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Status = 3
-									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Lon = platform.EndWorkSpace.Lon
-									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Lat = platform.EndWorkSpace.Lat
-
+									truck.Unload(platform.EndWorkSpace)
 									fmt.Println("车子正在去卸料")
 								} else if truck.Status == 3 {
-									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Status = 1
-									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Lon = platform.StartWorkSpace.Lon
-									data.Platforms[i].StartWorkSpace.Excavator.Trucks[j].Lat = platform.StartWorkSpace.Lat
+									truck.Load(platform.StartWorkSpace)
 									fmt.Println("车子正在去装料")
 								}
 							}
@@ -75,9 +68,9 @@ func InitDispatch(cx *gin.Context) {
 			}
 		}
 	}()
-	var platforms map[int]*model.Platform
-	var excavators map[int]*model.Excavator
-	var trucks map[int]*model.Truck
+	var platforms = make(map[int]*model.Platform)
+	var excavators = make(map[int]*model.Excavator)
+	var trucks = make(map[int]*model.Truck)
 	var parking = &model.Parking{
 		Name:   "停车场",
 		Lon:    119.142511,
@@ -95,7 +88,7 @@ func InitDispatch(cx *gin.Context) {
 			Id:              i + 1,
 			Name:            excavatorNames[i],
 			Status:          "normal",
-			Trucks:          nil,
+			Trucks:          map[int]*model.Truck{},
 			CurrentTruckNum: 0,
 			MaxTruckNum:     maxTruckNum,
 		}
@@ -138,12 +131,12 @@ func InitDispatch(cx *gin.Context) {
 				},
 			},
 		}
-		excavator := excavators[i]
+		excavator := excavators[i+1]
 		excavator.Lon = platform.StartWorkSpace.Lon
 		excavator.Lat = platform.StartWorkSpace.Lat
 		trucksEntryNum := rand.Intn(maxTruckNum + 1)
 		trucksEntry := parking.RandReduceTruck(trucksEntryNum)
-		excavator.AddTruck(parking.Lat, parking.Lon, platform, trucksEntry)
+		excavator.AddTrucks(platform, trucksEntry)
 		platform.StartWorkSpace.Excavator = excavator
 		platforms[platform.Id] = platform
 	}
@@ -281,57 +274,28 @@ func DispatchEdit(cx *gin.Context) {
 	switch {
 	case req.ToPlatformId > 0 && fromId == -1:
 		// 停车场->工作区
+		if data.Platforms[req.ToPlatformId].StartWorkSpace.Excavator.CurrentTruckNum >= data.Platforms[req.ToPlatformId].StartWorkSpace.Excavator.MaxTruckNum && req.Type != 1 {
+			infra.Zaplog.Error("平台已满")
+			cx.JSON(http.StatusOK, gin.H{"code": 1009, "data": nil, "msg": "平台已满，调度失败"})
+			return
+		}
 		data.Parking.ReduceTruck(truckReq)
-		data.Platforms[req.ToPlatformId].StartWorkSpace.Excavator.AddTruck(data.Parking.Lat, data.Parking.Lon, data.Platforms[req.ToPlatformId], map[int]*model.Truck{truckReq.Id: truckReq})
+		data.Platforms[req.ToPlatformId].StartWorkSpace.Excavator.AddTrucks(data.Platforms[req.ToPlatformId], map[int]*model.Truck{truckReq.Id: truckReq})
 	case req.ToPlatformId < 0 && fromId > 0:
 		// 工作区->停车场
-		for i, platform := range data.Platforms {
-			if platform.Id == fromId {
-				data.Platforms[i].StartWorkSpace.Excavator.Trucks = lo.FilterMap(platform.StartWorkSpace.Excavator.Trucks, func(truck model.Truck, index int) (model.Truck, bool) {
-					if truck.Id == req.Id {
-						return model.Truck{}, false
-					}
-					return truck, true
-				})
-				data.Platforms[i].StartWorkSpace.Excavator.CurrentTruckNum -= 1
-				break
-			}
-		}
-		truckReq.Route = gpsSimulator(geo.NewPoint(truckReq.Lat, truckReq.Lon), geo.NewPoint(data.Parking.Lat, data.Parking.Lon))
-		truckReq.Lon = data.Parking.Lon
-		truckReq.Lat = data.Parking.Lat
-		truckReq.Status = 0
-		data.Parking.Trucks = append(data.Parking.Trucks, truckReq)
+		data.Platforms[fromId].StartWorkSpace.Excavator.ReduceTruck(truckReq)
+		data.Parking.AddTruck(truckReq, data.Platforms[fromId].StartWorkSpace)
+
 	case req.ToPlatformId > 0 && fromId > 0 && req.ToPlatformId != fromId:
 		// 工作区->工作区
-		for i, platform := range data.Platforms {
-			if platform.Id == fromId {
-				data.Platforms[i].StartWorkSpace.Excavator.Trucks = lo.FilterMap(platform.StartWorkSpace.Excavator.Trucks, func(truck model.Truck, index int) (model.Truck, bool) {
-					if truck.Id == req.Id {
-						return model.Truck{}, false
-					}
-					return truck, true
-				})
-				data.Platforms[i].StartWorkSpace.Excavator.CurrentTruckNum -= 1
-				break
-			}
+		if data.Platforms[req.ToPlatformId].StartWorkSpace.Excavator.CurrentTruckNum >= data.Platforms[req.ToPlatformId].StartWorkSpace.Excavator.MaxTruckNum && req.Type != 1 {
+			infra.Zaplog.Error("平台已满")
+			cx.JSON(http.StatusOK, gin.H{"code": 1009, "data": nil, "msg": "平台已满，调度失败"})
+			return
 		}
-		for i, platform := range data.Platforms {
-			if platform.Id == req.ToPlatformId {
-				if platform.StartWorkSpace.Excavator.CurrentTruckNum >= platform.StartWorkSpace.Excavator.MaxTruckNum && req.Type != 1 {
-					infra.Zaplog.Error("平台已满")
-					cx.JSON(http.StatusOK, gin.H{"code": 1009, "data": nil, "msg": "平台已满，调度失败"})
-					return
-				}
-				truckReq.Route = gpsSimulator(geo.NewPoint(truckReq.Lat, truckReq.Lon), geo.NewPoint(platform.StartWorkSpace.Lat, platform.StartWorkSpace.Lon))
-				truckReq.Lon = platform.StartWorkSpace.Lon
-				truckReq.Lat = platform.StartWorkSpace.Lat
-				truckReq.Status = 1
-				data.Platforms[i].StartWorkSpace.Excavator.CurrentTruckNum += 1
-				data.Platforms[i].StartWorkSpace.Excavator.Trucks = append(platform.StartWorkSpace.Excavator.Trucks, truckReq)
-				break
-			}
-		}
+		data.Platforms[fromId].StartWorkSpace.Excavator.ReduceTruck(truckReq)
+		data.Platforms[req.ToPlatformId].StartWorkSpace.Excavator.AddTruck(data.Platforms[req.ToPlatformId], truckReq)
+
 	default:
 		infra.Zaplog.Info("场景不处理")
 		cx.JSON(http.StatusOK, gin.H{"code": 1005, "data": nil, "msg": "场景不处理"})

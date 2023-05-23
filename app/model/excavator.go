@@ -11,13 +11,15 @@ type Excavator struct {
 	MaxTruckNum     int            `json:"max_truck_num,"`
 }
 
-func (e *Excavator) AddTruck(lat, lon float64, platform *Platform, trucks map[int]*Truck) {
+func (e *Excavator) AddTrucks(platform *Platform, trucks map[int]*Truck) {
 	for _, truck := range trucks {
-		e.Trucks[truck.Id] = truck
-		e.CurrentTruckNum++
-		truck.Unload(lat, lon, platform.StartWorkSpace)
+		e.AddTruck(platform, truck)
 	}
-
+}
+func (e *Excavator) AddTruck(platform *Platform, truck *Truck) {
+	e.Trucks[truck.Id] = truck
+	e.CurrentTruckNum++
+	truck.Load(platform.StartWorkSpace)
 }
 
 func (e *Excavator) ReduceTruck(truck *Truck) {
